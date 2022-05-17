@@ -1,0 +1,761 @@
+1줄 메모장 만들기
+-----------------
+1. 어디에 저장할까요?
+   maria DB를 사용하자
+
+2. 어떤것을 저장할까?
+   인덱스
+   작성자
+   비밀번호
+   내용
+   작성일
+   아이피
+   
+ 3. 어떻게 저장하지? 테이블을 만들어야 겠구먼.....
+    create table comment(
+    	idx int primary key auto_increment,
+    	name varchar(40) not null,
+    	password varchar(40) not null,
+    	content varchar(200) not null,
+    	regDate timestamp default now(),
+    	ip varchar(20) not null
+    )
+    
+4. 패키지 3개를 만들자
+	kr.human.memo.vo    ---- 데이터가 저장될 객체
+	kr.human.memo.dao   ---- DB에 관계된 객체 
+	kr.human.memo.service ---- 로직에 관계된 객체
+	
+5. vo패키지에 CommentVO를 만들자 -- 테이블과 1:1 대응되도록 만든다.
+===========================================================================
+CommentVO.java
+---------------------------------------------------------------------------   	
+	package kr.human.memo.vo;
+
+	import java.util.Date;
+	import lombok.Data;
+
+	@Data
+	public class CommentVO {
+		private int idx;
+		private String name;
+		private String password;
+		private String content;
+		private Date   regDate;
+		private String ip;
+		
+		// 저장/수정/삭제 구분하기 위한 필드
+		private String mode;
+	}
+---------------------------------------------------------------------------
+===========================================================================
+PagingVO.java
+---------------------------------------------------------------------------   	
+package kr.human.memo.vo;
+
+import java.util.List;
+// 페이지 계산을 하고 1페이지 분량의 글 목록을 가지는 VO
+public class PagingVO<T> {
+	private List<T> list; // 글목록
+	
+	// 4가지는 넘겨서 받자!!!
+	private int totalCount; // 전체 개수는 DB에서 받아서
+	private int currentPage; // 현재 페이지
+	private int pageSize;	 // 페이지당 글 수
+	private int blockSize;   // 하단의 페이지 번호 개수
+	
+	// 나머지는 계산해서 넣자
+	private int totalPage; // 전체 페이지 수
+	private int startNo;   // 시작 글번호
+	private int endNo;     // 마지막 글번호 (오라클에서만 사용)
+	private int startPage; // 시작 페이지 번호
+	private int endPage; // 마지막 페이지 번호
+	
+	// 4개 값을 넘겨 받는 생성자
+	public PagingVO(int totalCount, int currentPage, int pageSize, int blockSize) {
+		this.totalCount = totalCount;
+		this.currentPage = currentPage;
+		this.pageSize = pageSize;
+		this.blockSize = blockSize;
+		
+		calc();
+	}
+
+	private void calc() {
+		if(totalCount>0) {
+			if(currentPage<=0) currentPage=1;
+			if(pageSize<=1) pageSize=10;
+			if(blockSize<=1) blockSize=10;
+		
+			// 전체 페이지 수 = (전체 개수 -1)/페이지당 개수 + 1
+			// 총 : 123개 , 페이지당 : 10개 ==> 13페이지
+			// (123-1)/10 + 1 = 13
+			// 총 : 120개 , 페이지당 : 10개 ==> 12페이지
+			// (120-1)/10 + 1 = 12
+			totalPage = (totalCount-1)/pageSize + 1;
+			
+			// 시작 글번호 = (현재페이지-1)*페이지당 글수
+			// 오라클은 +1을 해준다. 인덱스가 1부터이다.
+			// 67개 10개씩
+			// 1페이지(0~9) = (1-1)*10 = 0 
+			// 2페이지(10~19) = (2-1)*10 = 10
+			// 7페이지(60~66) = (7-1)*10 = 60
+			startNo = (currentPage-1) * pageSize;
+			// 끝 글번호 = 시작글번호 + 페이지당 개수 - 1
+			endNo = startNo + pageSize - 1;
+			// 끝 글번호는 전체 개수를 넘을 수 없다. (오라클의 경우 조건을 > 로 
+			if(endNo>=totalCount) {
+				endNo = totalCount-1; // 오라클의 경우는 -1을 하지 않는다.
+			}
+			// 시작페이지 번호 = (현재페이지-1)/페이지목록개수 * 페이지목록개수 + 1 
+			// 현재 7페이지를 본다면 1 ~ 10페이지까지보이기
+			// 현재 13페이지를 본다면 11 ~ 20페이지까지보이기
+			startPage = (currentPage-1)/blockSize * blockSize + 1;
+			//  끝 페이지 = 시작페이지 + 페이지목록개수 - 1
+			endPage = startPage + blockSize - 1;
+			// 끝페이지는 전체페이지를 넘을 수 없다.
+			if(endPage>totalPage) endPage = totalPage;
+			
+		}
+	}
+
+	public List<T> getList() {
+		return list;
+	}
+
+	public void setList(List<T> list) {
+		this.list = list;
+	}
+
+	public int getTotalCount() {
+		return totalCount;
+	}
+
+	public int getCurrentPage() {
+		return currentPage;
+	}
+
+	public int getPageSize() {
+		return pageSize;
+	}
+
+	public int getBlockSize() {
+		return blockSize;
+	}
+
+	public int getTotalPage() {
+		return totalPage;
+	}
+
+	public int getStartNo() {
+		return startNo;
+	}
+
+	public int getEndNo() {
+		return endNo;
+	}
+
+	public int getStartPage() {
+		return startPage;
+	}
+
+	public int getEndPage() {
+		return endPage;
+	}
+	
+	// 메서드 2개를 추가하자
+	public String getPageInfo() {
+		// 전체 : 5 개(?/?페이지)
+		String pageInfo = "전체 : " + totalCount + "개";
+		if(totalCount>=1) {
+			pageInfo += "(" + currentPage + "/" + totalPage + "Page)";
+		}
+		return pageInfo;
+	}
+	
+	public String getPageList() {
+		String pageList = "";
+		// 시작페이지가 1이라면 이전은 없다.
+		pageList += "  <ul class='pagination pagination-sm justify-content-center'>";
+		if(startPage>1) {
+			pageList += "    <li class='page-item'>";
+			pageList += "      <a class='page-link' href='?p="+(startPage-1)+"&s="+pageSize+"&b="+blockSize+"' aria-label='Previous'>";
+			pageList += "        <span aria-hidden='true'>&laquo;</span>";
+			pageList += "      </a>";
+			pageList += "    </li>";
+		}
+		// 페이지 번호 출력
+		for(int i=startPage;i<=endPage;i++) {
+			if(currentPage==i)
+				pageList += "   <li class='page-item active'><a class='page-link' href='?p=" + i +"&s="+pageSize+"&b="+blockSize+"'>" + i + "</a></li>";
+			else
+				pageList += "   <li class='page-item'><a class='page-link' href='?p=" + i +"&s="+pageSize+"&b="+blockSize+"'>" + i + "</a></li>";
+		}
+		// 마지막페이지가 전체페이지수 보다 적을 경우에만 다음이 있다
+		if(endPage<totalPage) {
+			pageList += "	<li class='page-item'>";
+			pageList += "      <a class='page-link' href='?p="+(endPage+1)+"&s="+pageSize+"&b="+blockSize+"' aria-label='Next'>";
+			pageList += "        <span aria-hidden='true'>&raquo;</span>";
+			pageList += "      </a>";
+			pageList += "    </li>";
+		}
+		pageList += "  </ul>";
+
+		return pageList;
+	}
+	
+	
+	@Override
+	public String toString() {
+		return "PagingVO [list=" + list + ", totalCount=" + totalCount + ", currentPage=" + currentPage + ", pageSize="
+				+ pageSize + ", blockSize=" + blockSize + ", totalPage=" + totalPage + ", startNo=" + startNo
+				+ ", endNo=" + endNo + ", startPage=" + startPage + ", endPage=" + endPage + "]";
+	}
+	
+
+}
+---------------------------------------------------------------------------   	
+
+6. DAO클래스를 만들자.
+인터페이스를 만들자~~~
+ ===========================================================================
+ CommentDAO.java
+ ---------------------------------------------------------------------------
+package kr.human.memo.dao;
+
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.util.List;
+
+import kr.human.memo.vo.CommentVO;
+
+public interface CommentDAO {
+	// 1. 전체개수를 세기!!
+	int selectCount(Connection conn) throws SQLException;
+	// 2. 1개 얻기
+	CommentVO selectByIdx(Connection conn, int idx) throws SQLException;
+	// 3. 1페이지 분량 얻기
+	List<CommentVO> selectList(Connection conn, int startNo, int pageSize) throws SQLException;
+	// 4. 저장하기
+	int insert(Connection conn, CommentVO vo) throws SQLException;
+	// 5. 수정하기
+	int update(Connection conn, CommentVO vo) throws SQLException;
+	// 6. 삭제하기
+	int delete(Connection conn, int idx) throws SQLException;
+} 	
+ ---------------------------------------------------------------------------  
+ 인터페이스를 구현한 클래스를 만들자  	
+===========================================================================
+ CommentDAOImpl.java
+ ---------------------------------------------------------------------------
+	package kr.human.memo.dao;
+	
+	import java.sql.Connection;
+	import java.sql.PreparedStatement;
+	import java.sql.ResultSet;
+	import java.sql.SQLException;
+	import java.sql.Statement;
+	import java.util.ArrayList;
+	import java.util.List;
+	
+	import kr.human.jdbc.JDBCUtil;
+	import kr.human.memo.vo.CommentVO;
+	public class CommentDAOImpl implements CommentDAO{
+		// ----------------------------------------------------------------------
+		// 싱글톤 클래스로 만들자!!!
+		// 1. 자기 자신의 객체를 정적 멤버로 만든다.
+		private static CommentDAO instance = new CommentDAOImpl();
+		// 2. 밖에서 객체를 생성하지 못하도록 생성자를 private으로 만든다.
+		private CommentDAOImpl() {
+			;
+		}
+		// 3. 자신의 객체를 리턴하는 메서드를 만들어 준다.
+		public static CommentDAO getInstance() {
+			return instance;
+		}
+		// ----------------------------------------------------------------------
+		@Override
+		public int selectCount(Connection conn) throws SQLException {
+			int count = 0; // 리턴 타입의 변수 선언
+			String sql = "select count(*) from comment"; // 실행할 SQL명령을 만들고
+			Statement stmt = conn.createStatement(); // 명령 객체 생성
+			ResultSet rs = stmt.executeQuery(sql); // 명령 실행
+			rs.next(); // 다음 레코드(행)로 이동
+			count = rs.getInt(1); // 값 얻기
+			JDBCUtil.close(rs); // 닫기
+			JDBCUtil.close(stmt);
+			return count; // 결과 리턴
+		}
+		@Override
+		public CommentVO selectByIdx(Connection conn, int idx) throws SQLException {
+			CommentVO commentVO = null; // 리턴타입 변수 만들기
+			String sql = "select * from comment where idx=?"; // SQL 명령어 작성
+			PreparedStatement pstmt = conn.prepareStatement(sql); // 명령 객체 생성
+			pstmt.setInt(1, idx); // 명령어 완성
+			ResultSet rs = pstmt.executeQuery(); // 명령어 실행
+			if(rs.next()) { // 데이터 있다면
+				commentVO = new CommentVO(); // 객체를 생성하고
+				commentVO.setIdx(rs.getInt("idx")); // 각각의 필드에 값을 저장
+				commentVO.setName(rs.getString("name"));
+				commentVO.setPassword(rs.getString("password"));
+				commentVO.setContent(rs.getString("content"));
+				commentVO.setRegDate(rs.getTimestamp("regDate"));
+				commentVO.setIp(rs.getString("ip"));
+			}
+			JDBCUtil.close(rs); // 닫기
+			JDBCUtil.close(pstmt);
+			return commentVO; // 결과 리턴
+		}
+		@Override
+		public List<CommentVO> selectList(Connection conn, int startNo, int pageSize) throws SQLException {
+			List<CommentVO> list = null; // 리턴타입 변수 만들기
+			String sql = "select * from comment order by idx desc limit ?, ?"; // SQL 명령어 작성
+			PreparedStatement pstmt = conn.prepareStatement(sql); // 명령 객체 생성
+			pstmt.setInt(1, startNo); // 몇번째 부터 
+			pstmt.setInt(2, pageSize); // 몇개
+			ResultSet rs = pstmt.executeQuery(); // 명령어 실행
+			if(rs.next()) {
+				list = new ArrayList<>();
+				do {
+					CommentVO commentVO = new CommentVO(); // 객체를 생성하고
+					commentVO.setIdx(rs.getInt("idx")); // 각각의 필드에 값을 저장
+					commentVO.setName(rs.getString("name"));
+					commentVO.setPassword(rs.getString("password"));
+					commentVO.setContent(rs.getString("content"));
+					commentVO.setRegDate(rs.getTimestamp("regDate"));
+					commentVO.setIp(rs.getString("ip"));
+					
+					list.add(commentVO); // 리스트에 추가
+				}while(rs.next());
+			}
+			JDBCUtil.close(rs); // 닫기
+			JDBCUtil.close(pstmt);		
+			return list;
+		}
+		@Override
+		public int insert(Connection conn, CommentVO vo) throws SQLException {
+			int count = 0; // 리턴 타입의 변수 선언
+			String sql = "insert into comment (name,password,content,regDate,ip) values (?,?,?,now(),?)";
+			PreparedStatement pstmt = conn.prepareStatement(sql);
+			pstmt.setString(1, vo.getName());
+			pstmt.setString(2, vo.getPassword());
+			pstmt.setString(3, vo.getContent());
+			pstmt.setString(4, vo.getIp());
+			count  = pstmt.executeUpdate();
+			JDBCUtil.close(pstmt);
+			return count;
+		}
+		@Override
+		public int update(Connection conn, CommentVO vo) throws SQLException {
+			int count = 0; // 리턴 타입의 변수 선언
+			String sql = "update comment set content=?, regDate=now(), ip=? where idx=?";
+			PreparedStatement pstmt = conn.prepareStatement(sql);
+			pstmt.setString(1, vo.getContent());
+			pstmt.setString(2, vo.getIp());
+			pstmt.setInt(3, vo.getIdx());
+			count  = pstmt.executeUpdate();
+			JDBCUtil.close(pstmt);
+			return count;
+		}
+		@Override
+		public int delete(Connection conn, int idx) throws SQLException {
+			int count = 0; // 리턴 타입의 변수 선언
+			String sql = "delete from comment where idx=?";
+			PreparedStatement pstmt = conn.prepareStatement(sql);
+			pstmt.setInt(1, idx);
+			count  = pstmt.executeUpdate();
+			JDBCUtil.close(pstmt);
+			return count;	
+		}
+	}
+---------------------------------------------------------------------------   	
+   	
+7. Service 클래스를 만들자. -- 실제 로직을 담당한다. 로직 1개당 메서드 1개로 작성. 싱글톤
+인터페이스를 만들자~~~ 
+===========================================================================
+CommentService.java  
+---------------------------------------------------------------------------
+package kr.human.memo.service;
+// 로직을 처리한는 기능들.... 메서드 1개당 로직 1개
+
+import kr.human.memo.vo.CommentVO;
+import kr.human.memo.vo.PagingVO;
+
+public interface CommentService {
+	// 1. 목록보기
+	PagingVO<CommentVO> selectList(int currentPage, int pageSize,int blockSize);
+	//List<CommentVO> selectAll();
+	// 2. 저장하기
+	int insert(CommentVO vo);
+	// 3. 수정하기
+	int update(CommentVO vo);
+	// 4. 삭제하기
+	int delete(CommentVO vo);
+}
+---------------------------------------------------------------------------
+인터페이스를 구현하는 클래스를 만들자
+===========================================================================
+CommentServiceImpl.java  
+---------------------------------------------------------------------------
+package kr.human.memo.service;
+
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.util.List;
+
+import kr.human.jdbc.JDBCUtil;
+import kr.human.memo.dao.CommentDAO;
+import kr.human.memo.dao.CommentDAOImpl;
+import kr.human.memo.vo.CommentVO;
+import kr.human.memo.vo.PagingVO;
+
+public class CommentServiceImpl implements CommentService {
+	// -----------------------------------------------------------------------
+	// 싱글톤 클래스로 만들자!!!
+	private static CommentService instance = new CommentServiceImpl();
+
+	private CommentServiceImpl() {
+		;
+	}
+
+	public static CommentService getInstance() {
+		return instance;
+	}
+	// -----------------------------------------------------------------------
+	@Override
+	public PagingVO<CommentVO> selectList(int currentPage, int pageSize, int blockSize) {
+		
+		PagingVO<CommentVO> pagingVO = null; // ======= 이부분
+		CommentDAO dao = null;
+		Connection conn = null;
+		try{
+			conn = JDBCUtil.getConnection();
+			dao = CommentDAOImpl.getInstance();
+			conn.setAutoCommit(false);
+			//---------------------------------------------------------------------
+			// 전체개수는 DB에서 가져온다.
+			int totalCount = dao.selectCount(conn); 
+			// 객체를 생성하는 순간 모든 페이지 계산이 끝난다.
+			pagingVO = new PagingVO<>(totalCount, currentPage, pageSize, blockSize);
+			// 글목록을 가져온다.
+			List<CommentVO> list = dao.selectList(conn, pagingVO.getStartNo() , pagingVO.getPageSize());
+			// 글을 VO에 넣어준다.
+			pagingVO.setList(list);
+			//---------------------------------------------------------------------
+			conn.commit();
+		} catch (SQLException e) {
+			JDBCUtil.rollback(conn);
+			e.printStackTrace();
+		}
+		return pagingVO; // ===== 이부분
+	}
+
+	
+
+	@Override
+	public int insert(CommentVO vo) {
+		int count = 0;
+		try (Connection conn = JDBCUtil.getConnection()) {
+			// 데이터가 유효할때만 저장한다.
+			if (vo != null) { // 객체가 있고
+				if (vo.getName() != null && vo.getName().trim().length() > 0) { // 이름이 존재하고
+					if (vo.getPassword() != null && vo.getPassword().trim().length() > 0) { // 비번이 존재하고
+						if (vo.getContent() != null && vo.getContent().trim().length() > 0) { // 내용이 존재할때
+							count = CommentDAOImpl.getInstance().insert(conn, vo);
+						}
+					}
+				}
+			}
+		} catch (SQLException e) {
+			e.printStackTrace();
+		}
+		return count;
+	}
+
+	@Override
+	public int update(CommentVO vo) {
+		int count = 0;
+		try (Connection conn = JDBCUtil.getConnection()) {
+			// 데이터가 유효할때만 수정한다.
+			if (vo != null) { // 객체가 있고
+				if (vo.getPassword() != null && vo.getPassword().trim().length() > 0) { // 비번이 존재하고
+					if (vo.getContent() != null && vo.getContent().trim().length() > 0) { // 내용이 존재할때
+						// DB에 있는 암호와 넘어온 암호가 일치 할떄만 수정한다.
+						CommentVO dbVO = CommentDAOImpl.getInstance().selectByIdx(conn, vo.getIdx());
+						if (dbVO != null && dbVO.getPassword().equals(vo.getPassword())) {
+							count = CommentDAOImpl.getInstance().update(conn, vo);
+						}
+					}
+				}
+			}
+		} catch (SQLException e) {
+			e.printStackTrace();
+		}
+		return count;
+	}
+
+	@Override
+	public int delete(CommentVO vo) {
+		int count = 0;
+		try (Connection conn = JDBCUtil.getConnection()) {
+			// 데이터가 유효할때만 삭제한다.
+			if (vo != null) { // 객체가 있고
+				// DB에 있는 암호와 넘어온 암호가 일치 할떄만 삭제한다.
+				CommentVO dbVO = CommentDAOImpl.getInstance().selectByIdx(conn, vo.getIdx());
+				if (dbVO != null && dbVO.getPassword().equals(vo.getPassword())) {
+					count = CommentDAOImpl.getInstance().delete(conn, vo.getIdx());
+				}
+			}
+		} catch (SQLException e) {
+			e.printStackTrace();
+		}
+		return count;
+	}
+
+}
+
+---------------------------------------------------------------------------
+ 
+ 
+ 8. JSP파일을 만들자!!!!
+ 목록보기 -- index.jsp
+ 저장/수정/삭제 완료 -- updateOk.jsp
+ 
+===========================================================================
+index.jsp
+---------------------------------------------------------------------------
+<%@page import="kr.human.memo.vo.PagingVO"%>
+<%@page import="java.text.SimpleDateFormat"%>
+<%@page import="java.util.Date"%>
+<%@page import="kr.human.memo.service.CommentServiceImpl"%>
+<%@page import="kr.human.memo.service.CommentService"%>
+<%@page import="kr.human.memo.vo.CommentVO"%>
+<%@page import="java.util.List"%>
+<%@ page language="java" contentType="text/html; charset=UTF-8" pageEncoding="UTF-8"%>
+<%
+	//여기서 현재페이지 번호/페이지당 글수/페이지리스트 개수를 받아야 한다.
+	int currentPage = 1;
+	try{
+		currentPage = Integer.parseInt(request.getParameter("p"));
+	}catch(Exception e){
+		;
+	}
+	int pageSize = 10;
+	try{
+		pageSize = Integer.parseInt(request.getParameter("s"));
+	}catch(Exception e){
+		;
+	}
+	int blockSize = 10;
+	try{
+		blockSize = Integer.parseInt(request.getParameter("b"));
+	}catch(Exception e){
+		;
+	}	
+
+	// DB에서 글 목록을 읽어온다.
+	PagingVO<CommentVO> pagingVO = CommentServiceImpl.getInstance().selectList(currentPage, pageSize, blockSize);
+%>
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>1줄 메모장</title>
+<link href="${pageContext.request.servletContext.contextPath }/webjars/bootstrap/5.1.3/css/bootstrap.min.css" rel="stylesheet">
+<script type="text/javascript" src="${pageContext.request.servletContext.contextPath }/webjars/jquery/3.6.0/jquery.min.js" ></script>
+<script type="text/javascript" src="${pageContext.request.servletContext.contextPath }/webjars/bootstrap/5.1.3/js/bootstrap.min.js" ></script>
+<script type="text/javascript">
+	$(function(){
+		$("#cancelBtn").css('display','none');
+	});
+	
+	function updateComment(idx, name, content){ // 수정하기 누르면 작동
+		$("#cancelBtn").css('display','inline'); // 취소버튼 보이고
+		// alert(idx + "\n" + name + "\n" + content);
+		$("#idx").val(idx); // 글번호 넣고
+		$("#name").val(name); // 이름넣고
+		$("#content").val(content); // 내용넣고
+		$("#submitBtn").val("수정"); // 버튼이름을 수정으로 변경
+		$("#mode").val("update"); // 모드를 update로 변경
+		$("#password").focus(); // 비번입력자리에 커서 보내기
+	}
+	function deleteComment(idx, name, content){ // 삭제하기 누르면 작동
+		$("#cancelBtn").css('display','inline');
+		// alert(idx + "\n" + name + "\n" + content);
+		$("#idx").val(idx); // 글번호 넣고
+		$("#name").val(name); // 이름넣고
+		$("#content").val(content); // 내용넣고
+		$("#submitBtn").val("삭제"); // 버튼이름을 삭제으로 변경
+		$("#mode").val("delete"); // 모드를 delete로 변경
+		$("#password").focus(); // 비번입력자리에 커서 보내기
+	}
+	function resetComment(){ // 취소하기 누르면 작동
+		$("#cancelBtn").css('display','none');
+		$("#idx").val("0"); // 글번호 넣고
+		$("#name").val(""); // 이름넣고
+		$("#content").val(""); // 내용넣고
+		$("#submitBtn").val("저장"); // 버튼이름을 저장으로 변경
+		$("#mode").val("insert"); // 모드를 delete로 변경
+		$("#name").focus(); // 이름입력자리에 커서 보내기
+	}
+	
+</script>
+<style type="text/css">
+	table{ width: 900px; margin: auto; border: none; padding: 5px;}
+	td {padding: 5px; border: 1px solid gray;}
+	th {padding: 5px; border: 1px solid gray; background-color: silver; text-align: center;}
+	.title {font-size: 18pt; border: none; text-align: center;}
+</style>
+</head>
+<body>
+	<table>
+		<tr>
+			<td colspan="5" class="title">1줄 메모장</td>
+		</tr>
+		<tr>
+			<td colspan="5" align="right" style="border: none;"><%=pagingVO.getPageInfo() %></td>
+		</tr>
+		<tr>
+			<th width="5%">No</th>
+			<th>작성자</th>
+			<th width="60%">내용</th>
+			<th>작성일</th>
+			<th>IP</th>
+		</tr>
+		<%
+			if(pagingVO.getTotalCount()==0){
+		%>
+		<tr>
+			<td colspan="5" align="center">등록된 글이 없습니다.</td>
+		</tr>		
+		<% 
+			}else{ 
+				for(CommentVO vo : pagingVO.getList()){
+		%>
+		<tr align="center">
+			<td><%=vo.getIdx() %></td>		
+			<td><%=vo.getName() %></td>		
+			<td title="<%=vo.getContent() %>" align="left">
+			<%
+			String content = vo.getContent();
+			if(content.length()>30){
+				content = content.substring(0,30) + "....";
+			}
+			content = content.replaceAll("<", "&lt;"); // < 를 특수문자로 만든다. 
+			out.println(content);
+			%>
+			<input type="button" onclick="updateComment(<%=vo.getIdx() %>,'<%=vo.getName() %>','<%=vo.getContent() %>')" value="수정" class="btn btn-outline-success btn-sm" />
+			<input type="button" onclick="deleteComment(<%=vo.getIdx() %>,'<%=vo.getName() %>','<%=vo.getContent() %>')"  value="삭제" class="btn btn-outline-success btn-sm" />
+			</td>		
+			<td>
+			<%
+			Date date = vo.getRegDate();
+			SimpleDateFormat sdf = new SimpleDateFormat("yy-MM-dd hh:mm");
+			out.println(sdf.format(date));
+			%>
+			</td>		
+			<td><%=vo.getIp() %></td>		
+		</tr>
+		<% 		
+				}
+			}
+		%>	
+		<tr>
+			<td colspan="5" style="border: none;" align="center">
+				<%-- 페이지 리스트를 찍자 --%>
+				<%=pagingVO.getPageList() %>
+			</td>
+		</tr>
+		<tr>
+			<td colspan="5" style="border: none;" align="center">
+				<%-- 여기에 폼을 달자!!!! --%>
+				<form action="updateOk.jsp" method="post">
+					<input type="hidden" name="idx" id="idx" value="0">
+					<input type="hidden" name="p" id="p" value="<%=pagingVO.getCurrentPage()%>">
+					<input type="hidden" name="s" id="s" value="<%=pagingVO.getPageSize()%>">
+					<input type="hidden" name="b" id="b" value="<%=pagingVO.getBlockSize()%>">
+					<input type="hidden" name="mode" id="mode" value="insert"> <%-- 저장/수정/삭제 표시 --%>
+					<input type="text" name="name" id="name" required="required" size="5"/>
+					<input type="password" name="password" id="password" required="required" size="5"/>
+					<input type="text" name="content" id="content" required="required" size="75"/>
+					<input type="submit" id="submitBtn" value="저장" class="btn btn-outline-success btn-sm" />
+					<input type="button" id="cancelBtn" value="취소" class="btn btn-outline-success btn-sm" onclick="resetComment()" />
+				</form>
+			</td>
+		</tr>
+	</table>
+	
+</body>
+</html>
+---------------------------------------------------------------------------
+===========================================================================
+updateOk.jsp
+---------------------------------------------------------------------------
+<%@page import="kr.human.memo.service.CommentServiceImpl"%>
+<%@ page language="java" contentType="text/html; charset=UTF-8" pageEncoding="UTF-8"%>
+<% 
+// 한글 깨짐 방지
+request.setCharacterEncoding("UTF-8");
+// GET방식 막기
+if(!request.getMethod().equals("POST")){
+	response.sendRedirect("index.jsp");
+	return;
+}
+
+//여기서 현재페이지 번호/페이지당 글수/페이지리스트 개수를 받아야 한다.
+int currentPage = 1;
+try{
+	currentPage = Integer.parseInt(request.getParameter("p"));
+}catch(Exception e){
+	;
+}
+int pageSize = 10;
+try{
+	pageSize = Integer.parseInt(request.getParameter("s"));
+}catch(Exception e){
+	;
+}
+int blockSize = 10;
+try{
+	blockSize = Integer.parseInt(request.getParameter("b"));
+}catch(Exception e){
+	;
+}	
+%>
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Insert title here</title>
+</head>
+<body>
+	<%-- VO로 받자 --%>
+	<jsp:useBean id="vo" class="kr.human.memo.vo.CommentVO" />
+	<jsp:setProperty property="*" name="vo"/>
+	<%-- IP는 자동으로  넣어주자 --%>
+	<jsp:setProperty property="ip" name="vo" value="<%=request.getRemoteAddr() %>"/>
+	
+	<%
+		// 이제 서비스클래스를 호출하여 처리를 한다.
+		if(vo!=null){
+			switch(vo.getMode()){
+			case "insert":
+				CommentServiceImpl.getInstance().insert(vo);
+				response.sendRedirect("index.jsp?p=1&s=" + pageSize + "&b=" + blockSize);
+				break;
+			case "update":
+				CommentServiceImpl.getInstance().update(vo);
+				response.sendRedirect("index.jsp?p=" + currentPage + "&s=" + pageSize + "&b=" + blockSize);
+				break;
+			case "delete":
+				CommentServiceImpl.getInstance().delete(vo);
+				response.sendRedirect("index.jsp?p=" + currentPage + "&s=" + pageSize + "&b=" + blockSize);
+				break;
+			}
+		}
+		// 리스트로 간다.
+	%>
+</body>
+</html>
+---------------------------------------------------------------------------
+   	
